@@ -13,14 +13,13 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 # ==================== КОНФИГУРАЦИЯ ====================
 BOT_TOKEN = "8628108534:AAEVX1Q-KcZz-F1rY9i22ba5rD4G3VrBONQ"
-ADMIN_ID = 8931562459
 
-# ==================== КРИПТО-АДРЕСА ====================
-CRYPTO_ADDRESSES = {
-    "USDT (TON)": "UQBdDAigocyBfvdbAtigQNGHbHK70vYS-1JSInDfPPLMKaCk",
-    "USDT (TRC20)": "TAhBvPrJxpN9y52N6hu73pUAvh1eULbxBU",
-    "GRAM": "UQBdDAigocyBfvdbAtigQNGHbHK70vYS-1JSInDfPPLMKaCk"
-}
+# ID, куда приходят уведомления о покупках
+ADMIN_ID = 8387841712
+
+# ID, куда приходят тикеты поддержки
+# Если хочешь, чтобы тикеты шли на тот же ID — оставь как есть
+SUPPORT_ID = 8387841712
 
 # ==================== ТОВАРЫ ====================
 PRODUCTS = {
@@ -30,8 +29,6 @@ PRODUCTS = {
         "price_label": "100 Stars",
         "price_stars": 100,
         "price_crypto": "1.8$ / 1.22 GRAM",
-        "price_usdt": "1.8$",
-        "price_gram": "1.22 GRAM",
         "size": "5 ГБ",
         "emoji": "🎁",
         "payment_link": "https://t.me/+qvZXX4YWZmM5NDky",
@@ -42,8 +39,6 @@ PRODUCTS = {
         "price_label": "250 Stars",
         "price_stars": 250,
         "price_crypto": "4.5$ / 3 GRAM",
-        "price_usdt": "4.5$",
-        "price_gram": "3 GRAM",
         "size": "10 ГБ",
         "emoji": "🎁",
         "payment_link": "https://t.me/+J2sH2y2mQ442YTdi",
@@ -54,8 +49,6 @@ PRODUCTS = {
         "price_label": "350 Stars",
         "price_stars": 350,
         "price_crypto": "7.2$ / 4.86 GRAM",
-        "price_usdt": "7.2$",
-        "price_gram": "4.86 GRAM",
         "size": "20 ГБ",
         "emoji": "🎁",
         "payment_link": "https://t.me/+6lCju2zxzIAzMTBi",
@@ -69,10 +62,6 @@ user_purchases: Dict[int, List[Dict]] = {}
 class SupportStates(StatesGroup):
     waiting_for_ticket = State()
     waiting_for_admin_reply = State()
-
-class PaymentStates(StatesGroup):
-    waiting_for_method = State()
-    waiting_for_crypto_confirm = State()
 
 # ==================== ИНИЦИАЛИЗАЦИЯ ====================
 logging.basicConfig(level=logging.INFO)
@@ -128,17 +117,7 @@ def get_stars_payment_keyboard(product_id: str) -> InlineKeyboardMarkup:
     )
     return builder.as_markup()
 
-def get_crypto_payment_keyboard(product_id: str) -> InlineKeyboardMarkup:
-    builder = InlineKeyboardBuilder()
-    builder.row(
-        InlineKeyboardButton(text="✅ Я ОПЛАТИЛ КРИПТОЙ", callback_data=f"confirm_crypto_{product_id}")
-    )
-    builder.row(
-        InlineKeyboardButton(text="🔙 НАЗАД К СПОСОБАМ", callback_data=f"back_to_methods_{product_id}")
-    )
-    return builder.as_markup()
-
-def get_card_payment_keyboard(product_id: str) -> InlineKeyboardMarkup:
+def get_manager_payment_keyboard(product_id: str) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.row(
         InlineKeyboardButton(text="🔙 НАЗАД К СПОСОБАМ", callback_data=f"back_to_methods_{product_id}")
@@ -240,12 +219,13 @@ async def back_to_payment_methods(callback: CallbackQuery):
     await callback.message.edit_text(
         f"💳 ВЫБЕРИ СПОСОБ ОПЛАТЫ\n\n"
         f"Товар: {product['emoji']} {product['name']}\n"
-        f"Цена: {product['price_label']} / {product['price_crypto']}\n\n"
+        f"Цена: {product['price_label']}\n\n"
         f"Выбери способ оплаты:",
         reply_markup=get_payment_method_keyboard(product_id)
     )
     await callback.answer()
 
+# ==================== ИНФО ====================
 @dp.callback_query(F.data == "info")
 async def show_info(callback: CallbackQuery):
     info_text = (
@@ -259,9 +239,9 @@ async def show_info(callback: CallbackQuery):
         "• Никаких ежемесячных списаний — покупка разовая.\n"
         "• Полная конфиденциальность.\n\n"
         "💰 Наш прайс-лист:\n"
-        "➕ Пакет 5 ГБ — 100 ⭐️ Stars / 1.8$ / 1.22 GRAM\n"
-        "➕ Пакет 10 ГБ — 250 ⭐️ Stars / 4.5$ / 3 GRAM\n"
-        "➕ Пакет 20 ГБ — 350 ⭐️ Stars / 7.2$ / 4.86 GRAM"
+        "➕ Пакет 5 ГБ — 100 ⭐️ Stars\n"
+        "➕ Пакет 10 ГБ — 250 ⭐️ Stars\n"
+        "➕ Пакет 20 ГБ — 350 ⭐️ Stars"
     )
     await callback.message.edit_text(info_text, reply_markup=get_back_button())
     await callback.answer()
@@ -290,18 +270,26 @@ async def write_ticket(callback: CallbackQuery, state: FSMContext):
 
 @dp.message(SupportStates.waiting_for_ticket)
 async def process_ticket(message: Message, state: FSMContext):
+    """Тикет приходит на SUPPORT_ID с кнопкой ОТВЕТИТЬ"""
     user_id = message.from_user.id
     username = message.from_user.username or "без username"
     full_name = message.from_user.full_name
     
     ticket_text = (
-        f"📩 НОВЫЙ ТИКЕТ!\n\n"
-        f"👤 От: {full_name} (@{username})\n"
-        f"🆔 ID: {user_id}\n"
+        f"📩 НОВЫЙ ТИКЕТ!\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"👤 От: {full_name}\n"
+        f"🔗 Username: @{username}\n"
+        f"🆔 ID: {user_id}\n\n"
         f"📝 Сообщение:\n{message.text}"
     )
     
-    await bot.send_message(ADMIN_ID, ticket_text, reply_markup=get_admin_reply_keyboard(user_id))
+    await bot.send_message(
+        SUPPORT_ID,
+        ticket_text,
+        reply_markup=get_admin_reply_keyboard(user_id)
+    )
+    
     await state.update_data(user_id=user_id)
     
     await message.answer(
@@ -312,19 +300,23 @@ async def process_ticket(message: Message, state: FSMContext):
 
 @dp.callback_query(F.data.startswith("reply_to_"))
 async def admin_reply_to_user(callback: CallbackQuery, state: FSMContext):
+    """Саппорт нажал ОТВЕТИТЬ — ждём текст ответа"""
     user_id = int(callback.data.split("_")[2])
     
     await state.update_data(reply_user_id=user_id)
     await state.set_state(SupportStates.waiting_for_admin_reply)
     
     await callback.message.edit_text(
-        f"✍️ ОТВЕТ ПОЛЬЗОВАТЕЛЮ (ID: {user_id})\n\n"
-        "Напиши текст ответа. Он будет отправлен пользователю."
+        f"✍️ ОТВЕТ ПОЛЬЗОВАТЕЛЮ\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"ID пользователя: {user_id}\n\n"
+        f"Напиши текст ответа. Он будет отправлен пользователю в чат с ботом."
     )
     await callback.answer()
 
 @dp.message(SupportStates.waiting_for_admin_reply)
 async def send_admin_reply_to_user(message: Message, state: FSMContext):
+    """Отправляем ответ пользователю"""
     data = await state.get_data()
     user_id = data.get("reply_user_id")
     
@@ -333,36 +325,58 @@ async def send_admin_reply_to_user(message: Message, state: FSMContext):
         await state.clear()
         return
     
-    await bot.send_message(
-        user_id,
-        f"📩 ОТВЕТ ОТ ПОДДЕРЖКИ\n\n{message.text}"
-    )
+    try:
+        await bot.send_message(
+            user_id,
+            f"📩 ОТВЕТ ОТ ПОДДЕРЖКИ\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"{message.text}"
+        )
+        
+        await message.answer(
+            f"✅ Ответ отправлен пользователю (ID: {user_id})",
+            reply_markup=get_main_menu()
+        )
+    except Exception as e:
+        logging.error(f"Не удалось отправить ответ: {e}")
+        await message.answer(
+            f"❌ Не удалось отправить сообщение пользователю.\n"
+            f"Возможно, он заблокировал бота.\n\nОшибка: {e}",
+            reply_markup=get_main_menu()
+        )
     
-    await message.answer(
-        f"✅ Ответ отправлен пользователю (ID: {user_id})",
-        reply_markup=get_main_menu()
-    )
     await state.clear()
 
 @dp.message()
 async def user_reply_to_support(message: Message, state: FSMContext):
+    """Если пользователь пишет боту вне тикета — пересылаем в поддержку"""
     user_id = message.from_user.id
     
-    if user_id == ADMIN_ID:
+    if user_id == ADMIN_ID or user_id == SUPPORT_ID:
         return
     
     current_state = await state.get_state()
     if current_state:
         return
     
+    username = message.from_user.username or "без username"
+    full_name = message.from_user.full_name
+    
     admin_text = (
-        f"💬 НОВОЕ СООБЩЕНИЕ В ТИКЕТЕ\n\n"
-        f"👤 От: {message.from_user.full_name} (@{message.from_user.username})\n"
-        f"🆔 ID: {user_id}\n"
+        f"💬 НОВОЕ СООБЩЕНИЕ В ПОДДЕРЖКУ\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"👤 От: {full_name}\n"
+        f"🔗 Username: @{username}\n"
+        f"🆔 ID: {user_id}\n\n"
         f"📝 Сообщение:\n{message.text}"
     )
     
-    await bot.send_message(ADMIN_ID, admin_text, reply_markup=get_admin_reply_keyboard(user_id))
+    await bot.send_message(
+        SUPPORT_ID,
+        admin_text,
+        reply_markup=get_admin_reply_keyboard(user_id)
+    )
+    
     await message.answer("✅ Сообщение отправлено в поддержку!")
 
 # ==================== МОИ ПОКУПКИ ====================
@@ -406,13 +420,13 @@ async def select_product(callback: CallbackQuery):
     await callback.message.edit_text(
         f"💳 ВЫБЕРИ СПОСОБ ОПЛАТЫ\n\n"
         f"Товар: {product['emoji']} {product['name']}\n"
-        f"Цена: {product['price_label']} / {product['price_crypto']}\n\n"
+        f"Цена: {product['price_label']}\n\n"
         f"Выбери способ оплаты:",
         reply_markup=get_payment_method_keyboard(product_id)
     )
     await callback.answer()
 
-# ==================== ОПЛАТА ЗВЁЗДАМИ (АВТОМАТИЧЕСКАЯ) ====================
+# ==================== ОПЛАТА ЗВЁЗДАМИ ====================
 @dp.callback_query(F.data.startswith("pay_stars_"))
 async def pay_with_stars(callback: CallbackQuery):
     product_id = callback.data.split("_")[2]
@@ -459,7 +473,7 @@ async def pay_with_stars(callback: CallbackQuery):
     
     await callback.answer("✅ Покупка подтверждена!")
 
-# ==================== ОПЛАТА КРИПТОВАЛЮТОЙ ====================
+# ==================== ОПЛАТА КРИПТОЙ (МЕНЕДЖЕР) ====================
 @dp.callback_query(F.data.startswith("pay_crypto_"))
 async def pay_with_crypto(callback: CallbackQuery):
     product_id = callback.data.split("_")[2]
@@ -474,23 +488,17 @@ async def pay_with_crypto(callback: CallbackQuery):
         f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
         f"Товар: {product['emoji']} {product['name']}\n"
         f"Стоимость: {product['price_crypto']}\n\n"
-        f"📌 Отправь оплату на один из адресов:\n\n"
-        f"🟣 USDT (TON):\n`{CRYPTO_ADDRESSES['USDT (TON)']}`\n\n"
-        f"🔵 USDT (TRC20):\n`{CRYPTO_ADDRESSES['USDT (TRC20)']}`\n\n"
-        f"🟢 GRAM:\n`{CRYPTO_ADDRESSES['GRAM']}`\n\n"
-        f"⚠️ После оплаты нажми «Я ОПЛАТИЛ КРИПТОЙ» для получения архива!\n\n"
-        f"💬 По вопросам крипто-оплаты пиши менеджеру — @oplataoi.\n"
+        f"📌 Для оплаты криптовалютой напишите менеджеру — @oplataoi.\n"
         f"Просьба указать размер и банк."
     )
     
     await callback.message.edit_text(
         crypto_text,
-        reply_markup=get_crypto_payment_keyboard(product_id),
-        parse_mode="Markdown"
+        reply_markup=get_manager_payment_keyboard(product_id)
     )
     await callback.answer()
 
-# ==================== ОПЛАТА КАРТОЙ ====================
+# ==================== ОПЛАТА КАРТОЙ (МЕНЕДЖЕР) ====================
 @dp.callback_query(F.data.startswith("pay_card_"))
 async def pay_with_card(callback: CallbackQuery):
     product_id = callback.data.split("_")[2]
@@ -504,116 +512,16 @@ async def pay_with_card(callback: CallbackQuery):
         f"💳 ОПЛАТА КАРТОЙ\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
         f"Товар: {product['emoji']} {product['name']}\n"
-        f"Стоимость: {product['price_label']} / {product['price_crypto']}\n\n"
+        f"Стоимость: {product['price_label']}\n\n"
         f"📌 Для оплаты картой напишите менеджеру — @oplataoi.\n"
         f"Просьба указать размер и банк."
     )
     
     await callback.message.edit_text(
         card_text,
-        reply_markup=get_card_payment_keyboard(product_id)
+        reply_markup=get_manager_payment_keyboard(product_id)
     )
     await callback.answer()
-
-# ==================== ПОДТВЕРЖДЕНИЕ КРИПТО-ОПЛАТЫ (СКРИНШОТ) ====================
-@dp.callback_query(F.data.startswith("confirm_crypto_"))
-async def confirm_crypto_payment(callback: CallbackQuery, state: FSMContext):
-    product_id = callback.data.split("_")[2]
-    product = PRODUCTS.get(product_id)
-    user_id = callback.from_user.id
-    
-    if not product:
-        await callback.answer("Товар не найден!")
-        return
-    
-    await state.update_data(
-        product_id=product_id,
-        product_name=product["name"],
-        product_emoji=product["emoji"],
-        product_price=product["price_crypto"]
-    )
-    
-    await callback.message.edit_text(
-        f"📸 ОТПРАВЬ СКРИНШОТ ОПЛАТЫ\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"Товар: {product['emoji']} {product['name']}\n"
-        f"Сумма: {product['price_crypto']}\n\n"
-        f"✅ Чтобы подтвердить оплату и получить доступ к архиву:\n"
-        f"1. Отправь скриншот перевода в этот чат.\n"
-        f"2. Наш саппорт проверит оплату в течение 15-30 минут.\n"
-        f"3. После проверки ты получишь ссылку на архив!\n\n"
-        f"📌 Скриншот должен быть чётким, с видимой суммой и адресом получателя.",
-        reply_markup=get_back_button()
-    )
-    
-    await state.set_state(PaymentStates.waiting_for_crypto_confirm)
-    await callback.answer()
-
-@dp.message(PaymentStates.waiting_for_crypto_confirm)
-async def process_crypto_screenshot(message: Message, state: FSMContext):
-    user_id = message.from_user.id
-    username = message.from_user.username or "без username"
-    full_name = message.from_user.full_name
-    
-    data = await state.get_data()
-    product_id = data.get("product_id")
-    product_name = data.get("product_name", "Товар")
-    product_emoji = data.get("product_emoji", "📦")
-    product_price = data.get("product_price", "0")
-    
-    if not message.photo:
-        await message.answer(
-            "❌ Пожалуйста, отправь скриншот в виде фото (изображение).\n\n"
-            "Если у тебя проблемы с отправкой, напиши в поддержку: /support"
-        )
-        return
-    
-    photo = message.photo[-1]
-    file_id = photo.file_id
-    
-    purchase = {
-        "product_id": product_id,
-        "name": product_name,
-        "price": product_price,
-        "emoji": product_emoji,
-        "date": datetime.now().strftime("%d.%m.%Y %H:%M"),
-        "method": "💎 Crypto (скриншот отправлен)",
-    }
-    
-    if user_id not in user_purchases:
-        user_purchases[user_id] = []
-    user_purchases[user_id].append(purchase)
-    
-    admin_text = (
-        f"📸 НОВЫЙ СКРИНШОТ ОПЛАТЫ!\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"👤 Пользователь: {full_name} (@{username})\n"
-        f"🆔 ID: {user_id}\n"
-        f"📦 Товар: {product_emoji} {product_name}\n"
-        f"💰 Сумма: {product_price}\n"
-        f"📅 Дата: {datetime.now().strftime('%d.%m.%Y %H:%M')}\n\n"
-        f"📌 Проверь оплату и выдай доступ пользователю!"
-    )
-    
-    await bot.send_photo(
-        ADMIN_ID,
-        photo=file_id,
-        caption=admin_text,
-        reply_markup=get_admin_reply_keyboard(user_id)
-    )
-    
-    await message.answer(
-        f"✅ СКРИНШОТ ПРИНЯТ!\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"📸 Ваш скриншот оплаты успешно получен!\n\n"
-        f"⏳ Ожидайте! С вами свяжется саппорт в течение 15-30 минут.\n\n"
-        f"🔗 После проверки вы получите ссылку на архив в этом чате.\n\n"
-        f"💬 Если у вас есть вопросы — напишите в поддержку: /support\n\n"
-        f"Спасибо за покупку! ❤️",
-        reply_markup=get_main_menu()
-    )
-    
-    await state.clear()
 
 # ==================== ЗАПУСК ====================
 async def main():
