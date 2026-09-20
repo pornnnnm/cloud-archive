@@ -13,9 +13,8 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 # ==================== КОНФИГУРАЦИЯ ====================
 BOT_TOKEN = "8628108534:AAEVX1Q-KcZz-F1rY9i22ba5rD4G3VrBONQ"
-
-ADMIN_ID = 8387841712      # куда падают покупки
-SUPPORT_ID = 8387841712    # куда падают тикеты
+ADMIN_ID = 8387841712
+SUPPORT_ID = 8387841712
 
 # ==================== ТОВАРЫ ====================
 PRODUCTS = {
@@ -27,7 +26,7 @@ PRODUCTS = {
         "size": "5 ГБ",
         "emoji": "🎁",
         "payment_link": "https://t.me/+qvZXX4YWZmM5NDky",
-        "archive_link": "https://t.me/+archive_5gb_link",   # ← замени на ссылку архива
+        "archive_link": "https://t.me/+archive_5gb_link",   # ← замени
     },
     "10gb": {
         "id": "10gb",
@@ -53,7 +52,6 @@ PRODUCTS = {
 
 # ==================== ХРАНИЛИЩЕ ====================
 user_purchases: Dict[int, List[Dict]] = {}
-pending_purchases: Dict[int, str] = {}   # user_id -> product_id (ожидание подтверждения)
 
 # ==================== FSM ====================
 class SupportStates(StatesGroup):
@@ -97,7 +95,6 @@ def get_stars_payment_keyboard(pid: str) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
     p = PRODUCTS[pid]
     kb.row(InlineKeyboardButton(text=f"⭐️ ОПЛАТИТЬ {p['price_label']}", url=p["payment_link"]))
-    kb.row(InlineKeyboardButton(text="✅ Я ОПЛАТИЛ", callback_data=f"confirm_stars_{pid}"))
     kb.row(InlineKeyboardButton(text="🔙 НАЗАД", callback_data=f"back_to_methods_{pid}"))
     return kb.as_markup()
 
@@ -157,18 +154,12 @@ async def back_to_main(cb: CallbackQuery):
 
 @dp.callback_query(F.data == "back_to_catalog")
 async def back_to_catalog(cb: CallbackQuery):
-    await cb.message.edit_text(
-        "📦 КАТАЛОГ ПАКЕТОВ\n\nВыбери тариф:",
-        reply_markup=get_catalog_menu(),
-    )
+    await cb.message.edit_text("📦 КАТАЛОГ ПАКЕТОВ\n\nВыбери тариф:", reply_markup=get_catalog_menu())
     await cb.answer()
 
 @dp.callback_query(F.data == "catalog")
 async def show_catalog(cb: CallbackQuery):
-    await cb.message.edit_text(
-        "📦 КАТАЛОГ ПАКЕТОВ\n\nВыбери тариф:",
-        reply_markup=get_catalog_menu(),
-    )
+    await cb.message.edit_text("📦 КАТАЛОГ ПАКЕТОВ\n\nВыбери тариф:", reply_markup=get_catalog_menu())
     await cb.answer()
 
 @dp.callback_query(F.data.startswith("back_to_methods_"))
@@ -327,8 +318,6 @@ async def pay_stars(cb: CallbackQuery):
         await cb.answer("Товар не найден")
         return
 
-    pending_purchases[cb.from_user.id] = pid
-
     text = (
         f"⭐️ ОПЛАТА ЗВЁЗДАМИ\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
@@ -337,56 +326,11 @@ async def pay_stars(cb: CallbackQuery):
         f"📌 Как оплатить:\n"
         f"1. Нажми «⭐️ ОПЛАТИТЬ {p['price_label']}».\n"
         f"2. Оплати звёзды Telegram.\n"
-        f"3. Вернись сюда и нажми «✅ Я ОПЛАТИЛ».\n"
-        f"4. Получи ссылку на архив в этом чате."
+        f"3. После оплаты ссылка на архив придёт в этот чат автоматически.\n\n"
+        f"📌 Если ссылка не пришла — напиши в поддержку: /support"
     )
     await cb.message.edit_text(text, reply_markup=get_stars_payment_keyboard(pid))
     await cb.answer()
-
-@dp.callback_query(F.data.startswith("confirm_stars_"))
-async def confirm_stars(cb: CallbackQuery):
-    pid = cb.data.split("_")[2]
-    p = PRODUCTS.get(pid)
-    if not p:
-        await cb.answer("Товар не найден")
-        return
-
-    uid = cb.from_user.id
-    pending_purchases.pop(uid, None)
-
-    purchase = {
-        "product_id": pid,
-        "name": p["name"],
-        "price": p["price_label"],
-        "emoji": p["emoji"],
-        "date": datetime.now().strftime("%d.%m.%Y %H:%M"),
-    }
-    user_purchases.setdefault(uid, []).append(purchase)
-
-    # Уведомление админу
-    await bot.send_message(
-        ADMIN_ID,
-        f"🛒 НОВАЯ ПОКУПКА (STARS)!\n\n"
-        f"👤 {cb.from_user.full_name}\n"
-        f"🔗 @{cb.from_user.username or '—'}\n"
-        f"🆔 {uid}\n"
-        f"📦 {p['name']}\n"
-        f"💰 {p['price_label']}\n"
-        f"📅 {purchase['date']}",
-    )
-
-    # Пользователю — ссылка на архив
-    await cb.message.edit_text(
-        f"✅ ОПЛАТА ПОДТВЕРЖДЕНА!\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"🎉 Ты приобрёл {p['emoji']} {p['name']}!\n"
-        f"💳 Оплачено: {p['price_label']}\n\n"
-        f"🔗 Ссылка на архив:\n{p['archive_link']}\n\n"
-        f"📌 Она также сохранена в «МОИ ПОКУПКИ».\n\n"
-        f"Спасибо за покупку! ❤️",
-        reply_markup=get_main_menu(),
-    )
-    await cb.answer("✅ Покупка подтверждена!")
 
 # ==================== 💎 КРИПТА (менеджер) ====================
 @dp.callback_query(F.data.startswith("pay_crypto_"))
