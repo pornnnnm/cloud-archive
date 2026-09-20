@@ -14,11 +14,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 # ==================== КОНФИГУРАЦИЯ ====================
 BOT_TOKEN = "8628108534:AAEVX1Q-KcZz-F1rY9i22ba5rD4G3VrBONQ"
 
-# ID, куда приходят уведомления о покупках
 ADMIN_ID = 8387841712
-
-# ID, куда приходят тикеты поддержки
-# Если хочешь, чтобы тикеты шли на тот же ID — оставь как есть
 SUPPORT_ID = 8387841712
 
 # ==================== ТОВАРЫ ====================
@@ -28,7 +24,6 @@ PRODUCTS = {
         "name": "Пакет 5 ГБ",
         "price_label": "100 Stars",
         "price_stars": 100,
-        "price_crypto": "1.8$ / 1.22 GRAM",
         "size": "5 ГБ",
         "emoji": "🎁",
         "payment_link": "https://t.me/+qvZXX4YWZmM5NDky",
@@ -38,7 +33,6 @@ PRODUCTS = {
         "name": "Пакет 10 ГБ",
         "price_label": "250 Stars",
         "price_stars": 250,
-        "price_crypto": "4.5$ / 3 GRAM",
         "size": "10 ГБ",
         "emoji": "🎁",
         "payment_link": "https://t.me/+J2sH2y2mQ442YTdi",
@@ -48,7 +42,6 @@ PRODUCTS = {
         "name": "Пакет 20 ГБ",
         "price_label": "350 Stars",
         "price_stars": 350,
-        "price_crypto": "7.2$ / 4.86 GRAM",
         "size": "20 ГБ",
         "emoji": "🎁",
         "payment_link": "https://t.me/+6lCju2zxzIAzMTBi",
@@ -225,7 +218,6 @@ async def back_to_payment_methods(callback: CallbackQuery):
     )
     await callback.answer()
 
-# ==================== ИНФО ====================
 @dp.callback_query(F.data == "info")
 async def show_info(callback: CallbackQuery):
     info_text = (
@@ -270,7 +262,6 @@ async def write_ticket(callback: CallbackQuery, state: FSMContext):
 
 @dp.message(SupportStates.waiting_for_ticket)
 async def process_ticket(message: Message, state: FSMContext):
-    """Тикет приходит на SUPPORT_ID с кнопкой ОТВЕТИТЬ"""
     user_id = message.from_user.id
     username = message.from_user.username or "без username"
     full_name = message.from_user.full_name
@@ -300,7 +291,6 @@ async def process_ticket(message: Message, state: FSMContext):
 
 @dp.callback_query(F.data.startswith("reply_to_"))
 async def admin_reply_to_user(callback: CallbackQuery, state: FSMContext):
-    """Саппорт нажал ОТВЕТИТЬ — ждём текст ответа"""
     user_id = int(callback.data.split("_")[2])
     
     await state.update_data(reply_user_id=user_id)
@@ -316,7 +306,6 @@ async def admin_reply_to_user(callback: CallbackQuery, state: FSMContext):
 
 @dp.message(SupportStates.waiting_for_admin_reply)
 async def send_admin_reply_to_user(message: Message, state: FSMContext):
-    """Отправляем ответ пользователю"""
     data = await state.get_data()
     user_id = data.get("reply_user_id")
     
@@ -349,7 +338,6 @@ async def send_admin_reply_to_user(message: Message, state: FSMContext):
 
 @dp.message()
 async def user_reply_to_support(message: Message, state: FSMContext):
-    """Если пользователь пишет боту вне тикета — пересылаем в поддержку"""
     user_id = message.from_user.id
     
     if user_id == ADMIN_ID or user_id == SUPPORT_ID:
@@ -486,8 +474,7 @@ async def pay_with_crypto(callback: CallbackQuery):
     crypto_text = (
         f"💎 ОПЛАТА КРИПТОВАЛЮТОЙ\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"Товар: {product['emoji']} {product['name']}\n"
-        f"Стоимость: {product['price_crypto']}\n\n"
+        f"Товар: {product['emoji']} {product['name']}\n\n"
         f"📌 Для оплаты криптовалютой напишите менеджеру — @oplataoi.\n"
         f"Просьба указать размер и банк."
     )
@@ -511,8 +498,7 @@ async def pay_with_card(callback: CallbackQuery):
     card_text = (
         f"💳 ОПЛАТА КАРТОЙ\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"Товар: {product['emoji']} {product['name']}\n"
-        f"Стоимость: {product['price_label']}\n\n"
+        f"Товар: {product['emoji']} {product['name']}\n\n"
         f"📌 Для оплаты картой напишите менеджеру — @oplataoi.\n"
         f"Просьба указать размер и банк."
     )
@@ -526,6 +512,9 @@ async def pay_with_card(callback: CallbackQuery):
 # ==================== ЗАПУСК ====================
 async def main():
     logging.info("Бот CLOUD Store запускается...")
+    # ВАЖНО: удаляем webhook, чтобы polling работал корректно
+    await bot.delete_webhook(drop_pending_updates=True)
+    logging.info("Webhook удалён, начинаю polling...")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
