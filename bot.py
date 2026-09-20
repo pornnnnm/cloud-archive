@@ -14,8 +14,8 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 # ==================== КОНФИГУРАЦИЯ ====================
 BOT_TOKEN = "8628108534:AAEVX1Q-KcZz-F1rY9i22ba5rD4G3VrBONQ"
 
-ADMIN_ID = 8387841712
-SUPPORT_ID = 8387841712
+ADMIN_ID = 8387841712      # куда падают покупки
+SUPPORT_ID = 8387841712    # куда падают тикеты
 
 # ==================== ТОВАРЫ ====================
 PRODUCTS = {
@@ -27,6 +27,7 @@ PRODUCTS = {
         "size": "5 ГБ",
         "emoji": "🎁",
         "payment_link": "https://t.me/+qvZXX4YWZmM5NDky",
+        "archive_link": "https://t.me/+archive_5gb_link",   # ← замени на ссылку архива
     },
     "10gb": {
         "id": "10gb",
@@ -36,6 +37,7 @@ PRODUCTS = {
         "size": "10 ГБ",
         "emoji": "🎁",
         "payment_link": "https://t.me/+J2sH2y2mQ442YTdi",
+        "archive_link": "https://t.me/+archive_10gb_link",  # ← замени
     },
     "20gb": {
         "id": "20gb",
@@ -45,11 +47,13 @@ PRODUCTS = {
         "size": "20 ГБ",
         "emoji": "🎁",
         "payment_link": "https://t.me/+6lCju2zxzIAzMTBi",
+        "archive_link": "https://t.me/+archive_20gb_link",  # ← замени
     },
 }
 
-# ==================== ХРАНИЛИЩЕ ДАННЫХ ====================
+# ==================== ХРАНИЛИЩЕ ====================
 user_purchases: Dict[int, List[Dict]] = {}
+pending_purchases: Dict[int, str] = {}   # user_id -> product_id (ожидание подтверждения)
 
 # ==================== FSM ====================
 class SupportStates(StatesGroup):
@@ -64,167 +68,132 @@ dp = Dispatcher(storage=storage)
 
 # ==================== КЛАВИАТУРЫ ====================
 def get_main_menu() -> InlineKeyboardMarkup:
-    builder = InlineKeyboardBuilder()
-    builder.row(InlineKeyboardButton(text="📦 КАТАЛОГ ПАКЕТОВ", callback_data="catalog"))
-    builder.row(InlineKeyboardButton(text="ℹ️ ОПИСАНИЕ И ИНФО", callback_data="info"))
-    builder.row(InlineKeyboardButton(text="🆘 ТЕХПОДДЕРЖКА", callback_data="support"))
-    builder.row(InlineKeyboardButton(text="🛒 МОИ ПОКУПКИ", callback_data="my_purchases"))
-    return builder.as_markup()
+    kb = InlineKeyboardBuilder()
+    kb.row(InlineKeyboardButton(text="📦 КАТАЛОГ ПАКЕТОВ", callback_data="catalog"))
+    kb.row(InlineKeyboardButton(text="ℹ️ ОПИСАНИЕ И ИНФО", callback_data="info"))
+    kb.row(InlineKeyboardButton(text="🆘 ТЕХПОДДЕРЖКА", callback_data="support"))
+    kb.row(InlineKeyboardButton(text="🛒 МОИ ПОКУПКИ", callback_data="my_purchases"))
+    return kb.as_markup()
 
 def get_catalog_menu() -> InlineKeyboardMarkup:
-    builder = InlineKeyboardBuilder()
-    for product_id, product in PRODUCTS.items():
-        builder.row(
-            InlineKeyboardButton(
-                text=f"{product['emoji']} {product['name']} — {product['price_label']}",
-                callback_data=f"buy_{product_id}"
-            )
-        )
-    builder.row(InlineKeyboardButton(text="🔙 НАЗАД", callback_data="back_to_main"))
-    return builder.as_markup()
+    kb = InlineKeyboardBuilder()
+    for pid, p in PRODUCTS.items():
+        kb.row(InlineKeyboardButton(
+            text=f"{p['emoji']} {p['name']} — {p['price_label']}",
+            callback_data=f"buy_{pid}"
+        ))
+    kb.row(InlineKeyboardButton(text="🔙 НАЗАД", callback_data="back_to_main"))
+    return kb.as_markup()
 
-def get_payment_method_keyboard(product_id: str) -> InlineKeyboardMarkup:
-    builder = InlineKeyboardBuilder()
-    builder.row(
-        InlineKeyboardButton(text="⭐️ Telegram Stars", callback_data=f"pay_stars_{product_id}")
-    )
-    builder.row(
-        InlineKeyboardButton(text="💎 Криптовалюта", callback_data=f"pay_crypto_{product_id}")
-    )
-    builder.row(
-        InlineKeyboardButton(text="💳 Оплата картой", callback_data=f"pay_card_{product_id}")
-    )
-    builder.row(
-        InlineKeyboardButton(text="🔙 НАЗАД К КАТАЛОГУ", callback_data="back_to_catalog")
-    )
-    return builder.as_markup()
+def get_payment_method_keyboard(pid: str) -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    kb.row(InlineKeyboardButton(text="⭐️ Telegram Stars", callback_data=f"pay_stars_{pid}"))
+    kb.row(InlineKeyboardButton(text="💎 Криптовалюта", callback_data=f"pay_crypto_{pid}"))
+    kb.row(InlineKeyboardButton(text="💳 Оплата картой", callback_data=f"pay_card_{pid}"))
+    kb.row(InlineKeyboardButton(text="🔙 НАЗАД К КАТАЛОГУ", callback_data="back_to_catalog"))
+    return kb.as_markup()
 
-def get_stars_payment_keyboard(product_id: str) -> InlineKeyboardMarkup:
-    builder = InlineKeyboardBuilder()
-    product = PRODUCTS[product_id]
-    builder.row(
-        InlineKeyboardButton(text="⭐️ ОПЛАТИТЬ ЗВЁЗДАМИ", url=product["payment_link"])
-    )
-    builder.row(
-        InlineKeyboardButton(text="🔙 НАЗАД К СПОСОБАМ", callback_data=f"back_to_methods_{product_id}")
-    )
-    return builder.as_markup()
+def get_stars_payment_keyboard(pid: str) -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    p = PRODUCTS[pid]
+    kb.row(InlineKeyboardButton(text=f"⭐️ ОПЛАТИТЬ {p['price_label']}", url=p["payment_link"]))
+    kb.row(InlineKeyboardButton(text="✅ Я ОПЛАТИЛ", callback_data=f"confirm_stars_{pid}"))
+    kb.row(InlineKeyboardButton(text="🔙 НАЗАД", callback_data=f"back_to_methods_{pid}"))
+    return kb.as_markup()
 
-def get_manager_payment_keyboard(product_id: str) -> InlineKeyboardMarkup:
-    builder = InlineKeyboardBuilder()
-    builder.row(
-        InlineKeyboardButton(text="🔙 НАЗАД К СПОСОБАМ", callback_data=f"back_to_methods_{product_id}")
-    )
-    return builder.as_markup()
+def get_manager_payment_keyboard(pid: str) -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    kb.row(InlineKeyboardButton(text="🔙 НАЗАД К СПОСОБАМ", callback_data=f"back_to_methods_{pid}"))
+    return kb.as_markup()
 
 def get_support_keyboard() -> InlineKeyboardMarkup:
-    builder = InlineKeyboardBuilder()
-    builder.row(InlineKeyboardButton(text="✍️ НАПИСАТЬ ТИКЕТ", callback_data="write_ticket"))
-    builder.row(InlineKeyboardButton(text="🏠 ГЛАВНОЕ МЕНЮ", callback_data="back_to_main"))
-    return builder.as_markup()
+    kb = InlineKeyboardBuilder()
+    kb.row(InlineKeyboardButton(text="✍️ НАПИСАТЬ ТИКЕТ", callback_data="write_ticket"))
+    kb.row(InlineKeyboardButton(text="🏠 ГЛАВНОЕ МЕНЮ", callback_data="back_to_main"))
+    return kb.as_markup()
 
 def get_back_button() -> InlineKeyboardMarkup:
-    builder = InlineKeyboardBuilder()
-    builder.row(InlineKeyboardButton(text="🔙 НАЗАД", callback_data="back_to_main"))
-    return builder.as_markup()
+    kb = InlineKeyboardBuilder()
+    kb.row(InlineKeyboardButton(text="🔙 НАЗАД", callback_data="back_to_main"))
+    return kb.as_markup()
 
 def get_admin_reply_keyboard(user_id: int) -> InlineKeyboardMarkup:
-    builder = InlineKeyboardBuilder()
-    builder.row(
-        InlineKeyboardButton(text="✍️ ОТВЕТИТЬ", callback_data=f"reply_to_{user_id}")
-    )
-    return builder.as_markup()
+    kb = InlineKeyboardBuilder()
+    kb.row(InlineKeyboardButton(text="✍️ ОТВЕТИТЬ", callback_data=f"reply_to_{user_id}"))
+    return kb.as_markup()
 
-# ==================== ОБРАБОТЧИКИ КОМАНД ====================
+# ==================== /start и /menu ====================
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
-    welcome_text = (
+    text = (
         "🌟 ДОБРО ПОЖАЛОВАТЬ В CLOUD STORE!\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
         "📁 Премиум Архивы Контента\n\n"
         "🔥 Что мы предлагаем:\n"
         "• Эксклюзивная коллекция — только лучший и проверенный контент.\n"
-        "• Разовая оплата — доступ навсегда, без скрытых списаний.\n"
+        "• Разовая оплата — доступ навсегда.\n"
         "• Мгновенная выдача — ссылка приходит сразу после оплаты.\n"
-        "• Круглосуточная поддержка — поможем в любой ситуации.\n\n"
+        "• Круглосуточная поддержка.\n\n"
         "👇 Выбери нужный раздел:"
     )
-    
-    builder = InlineKeyboardBuilder()
-    builder.row(
-        InlineKeyboardButton(text="📦 ОТКРЫТЬ КАТАЛОГ", callback_data="catalog")
-    )
-    builder.row(
+    kb = InlineKeyboardBuilder()
+    kb.row(InlineKeyboardButton(text="📦 ОТКРЫТЬ КАТАЛОГ", callback_data="catalog"))
+    kb.row(
         InlineKeyboardButton(text="ℹ️ ОПИСАНИЕ И ИНФО", callback_data="info"),
-        InlineKeyboardButton(text="🆘 ТЕХПОДДЕРЖКА", callback_data="support")
+        InlineKeyboardButton(text="🆘 ТЕХПОДДЕРЖКА", callback_data="support"),
     )
-    builder.row(
-        InlineKeyboardButton(text="🛒 МОИ ПОКУПКИ", callback_data="my_purchases")
-    )
-    
-    await message.answer(welcome_text, reply_markup=builder.as_markup())
+    kb.row(InlineKeyboardButton(text="🛒 МОИ ПОКУПКИ", callback_data="my_purchases"))
+    await message.answer(text, reply_markup=kb.as_markup())
 
 @dp.message(Command("menu"))
 async def cmd_menu(message: Message):
-    await message.answer(
-        "🏠 ГЛАВНОЕ МЕНЮ CLOUD STORE\n\n"
-        "Ты вернулся на главную. Выбери интересующий раздел ниже:",
-        reply_markup=get_main_menu()
-    )
+    await message.answer("🏠 ГЛАВНОЕ МЕНЮ:", reply_markup=get_main_menu())
 
-# ==================== ОБРАБОТЧИКИ КНОПОК ====================
+# ==================== ОБЩИЕ ХЕНДЛЕРЫ ====================
 @dp.callback_query(F.data == "back_to_main")
-async def back_to_main(callback: CallbackQuery):
-    await callback.message.edit_text(
-        "🏠 ГЛАВНОЕ МЕНЮ CLOUD STORE\n\n"
-        "Ты вернулся на главную. Выбери интересующий раздел ниже:",
-        reply_markup=get_main_menu()
-    )
-    await callback.answer()
+async def back_to_main(cb: CallbackQuery):
+    await cb.message.edit_text("🏠 ГЛАВНОЕ МЕНЮ:", reply_markup=get_main_menu())
+    await cb.answer()
 
 @dp.callback_query(F.data == "back_to_catalog")
-async def back_to_catalog(callback: CallbackQuery):
-    await callback.message.edit_text(
-        "📦 КАТАЛОГ ПАКЕТОВ\n\n"
-        "Выбери подходящий тариф и нажми на кнопку для покупки:",
-        reply_markup=get_catalog_menu()
+async def back_to_catalog(cb: CallbackQuery):
+    await cb.message.edit_text(
+        "📦 КАТАЛОГ ПАКЕТОВ\n\nВыбери тариф:",
+        reply_markup=get_catalog_menu(),
     )
-    await callback.answer()
+    await cb.answer()
 
 @dp.callback_query(F.data == "catalog")
-async def show_catalog(callback: CallbackQuery):
-    await callback.message.edit_text(
-        "📦 КАТАЛОГ ПАКЕТОВ\n\n"
-        "Выбери подходящий тариф и нажми на кнопку для покупки:",
-        reply_markup=get_catalog_menu()
+async def show_catalog(cb: CallbackQuery):
+    await cb.message.edit_text(
+        "📦 КАТАЛОГ ПАКЕТОВ\n\nВыбери тариф:",
+        reply_markup=get_catalog_menu(),
     )
-    await callback.answer()
+    await cb.answer()
 
 @dp.callback_query(F.data.startswith("back_to_methods_"))
-async def back_to_payment_methods(callback: CallbackQuery):
-    product_id = callback.data.split("_")[3]
-    product = PRODUCTS.get(product_id)
-    
-    if not product:
-        await callback.answer("Товар не найден!")
+async def back_to_methods(cb: CallbackQuery):
+    pid = cb.data.split("_")[3]
+    p = PRODUCTS.get(pid)
+    if not p:
+        await cb.answer("Товар не найден")
         return
-    
-    await callback.message.edit_text(
+    await cb.message.edit_text(
         f"💳 ВЫБЕРИ СПОСОБ ОПЛАТЫ\n\n"
-        f"Товар: {product['emoji']} {product['name']}\n"
-        f"Цена: {product['price_label']}\n\n"
+        f"Товар: {p['emoji']} {p['name']}\n"
+        f"Цена: {p['price_label']}\n\n"
         f"Выбери способ оплаты:",
-        reply_markup=get_payment_method_keyboard(product_id)
+        reply_markup=get_payment_method_keyboard(pid),
     )
-    await callback.answer()
+    await cb.answer()
 
+# ==================== ИНФО ====================
 @dp.callback_query(F.data == "info")
-async def show_info(callback: CallbackQuery):
-    info_text = (
+async def show_info(cb: CallbackQuery):
+    text = (
         "📦 ПОДРОБНАЯ ИНФОРМАЦИЯ\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        "Мы открываем доступ к защищенным приватным папкам "
-        "на быстрых серверах.\n\n"
+        "Мы открываем доступ к защищенным приватным папкам на быстрых серверах.\n\n"
         "🔥 Плюсы нашего сервиса:\n"
         "• Файлы хранятся вечно и не удаляются.\n"
         "• Регулярное добавление нового материала.\n"
@@ -235,286 +204,230 @@ async def show_info(callback: CallbackQuery):
         "➕ Пакет 10 ГБ — 250 ⭐️ Stars\n"
         "➕ Пакет 20 ГБ — 350 ⭐️ Stars"
     )
-    await callback.message.edit_text(info_text, reply_markup=get_back_button())
-    await callback.answer()
+    await cb.message.edit_text(text, reply_markup=get_back_button())
+    await cb.answer()
 
 # ==================== ПОДДЕРЖКА ====================
 @dp.callback_query(F.data == "support")
-async def show_support(callback: CallbackQuery):
-    support_text = (
+async def show_support(cb: CallbackQuery):
+    text = (
         "🆘 ТЕХПОДДЕРЖКА CLOUD STORE\n\n"
         "Возникли трудности со скачиванием, оплатой или есть предложение?\n\n"
-        "Опиши свой вопрос подробно, и наш саппорт ответит тебе прямо сюда в течение 15-30 минут."
+        "Опиши свой вопрос — саппорт ответит в течение 15–30 минут."
     )
-    await callback.message.edit_text(support_text, reply_markup=get_support_keyboard())
-    await callback.answer()
+    await cb.message.edit_text(text, reply_markup=get_support_keyboard())
+    await cb.answer()
 
 @dp.callback_query(F.data == "write_ticket")
-async def write_ticket(callback: CallbackQuery, state: FSMContext):
-    await callback.message.edit_text(
-        "✍️ НАПИСАТЬ ТИКЕТ\n\n"
-        "Опиши свою проблему или вопрос максимально подробно.\n"
-        "Наш саппорт ответит тебе в ближайшее время.\n\n"
-        "Отправь сообщение с описанием:"
-    )
+async def write_ticket(cb: CallbackQuery, state: FSMContext):
+    await cb.message.edit_text("✍️ Опиши свой вопрос одним сообщением:")
     await state.set_state(SupportStates.waiting_for_ticket)
-    await callback.answer()
+    await cb.answer()
 
 @dp.message(SupportStates.waiting_for_ticket)
-async def process_ticket(message: Message, state: FSMContext):
-    user_id = message.from_user.id
-    username = message.from_user.username or "без username"
-    full_name = message.from_user.full_name
-    
-    ticket_text = (
+async def process_ticket(msg: Message, state: FSMContext):
+    user_id = msg.from_user.id
+    text = (
         f"📩 НОВЫЙ ТИКЕТ!\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"👤 От: {full_name}\n"
-        f"🔗 Username: @{username}\n"
-        f"🆔 ID: {user_id}\n\n"
-        f"📝 Сообщение:\n{message.text}"
+        f"👤 {msg.from_user.full_name}\n"
+        f"🔗 @{msg.from_user.username or 'без username'}\n"
+        f"🆔 {user_id}\n\n"
+        f"📝 {msg.text}"
     )
-    
-    await bot.send_message(
-        SUPPORT_ID,
-        ticket_text,
-        reply_markup=get_admin_reply_keyboard(user_id)
-    )
-    
-    await state.update_data(user_id=user_id)
-    
-    await message.answer(
-        "✅ Ваш тикет отправлен! Саппорт ответит вам в ближайшее время.",
-        reply_markup=get_back_button()
-    )
+    await bot.send_message(SUPPORT_ID, text, reply_markup=get_admin_reply_keyboard(user_id))
+    await msg.answer("✅ Тикет отправлен! Саппорт ответит скоро.", reply_markup=get_back_button())
     await state.clear()
 
 @dp.callback_query(F.data.startswith("reply_to_"))
-async def admin_reply_to_user(callback: CallbackQuery, state: FSMContext):
-    user_id = int(callback.data.split("_")[2])
-    
-    await state.update_data(reply_user_id=user_id)
+async def admin_reply(cb: CallbackQuery, state: FSMContext):
+    uid = int(cb.data.split("_")[2])
+    await state.update_data(reply_user_id=uid)
     await state.set_state(SupportStates.waiting_for_admin_reply)
-    
-    await callback.message.edit_text(
-        f"✍️ ОТВЕТ ПОЛЬЗОВАТЕЛЮ\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"ID пользователя: {user_id}\n\n"
-        f"Напиши текст ответа. Он будет отправлен пользователю в чат с ботом."
-    )
-    await callback.answer()
+    await cb.message.edit_text(f"✍️ Напиши ответ пользователю (ID: {uid}):")
+    await cb.answer()
 
 @dp.message(SupportStates.waiting_for_admin_reply)
-async def send_admin_reply_to_user(message: Message, state: FSMContext):
+async def send_reply(msg: Message, state: FSMContext):
     data = await state.get_data()
-    user_id = data.get("reply_user_id")
-    
-    if not user_id:
-        await message.answer("❌ Ошибка: не найден ID пользователя.")
+    uid = data.get("reply_user_id")
+    if not uid:
+        await msg.answer("❌ Ошибка: нет ID.")
         await state.clear()
         return
-    
     try:
-        await bot.send_message(
-            user_id,
-            f"📩 ОТВЕТ ОТ ПОДДЕРЖКИ\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-            f"{message.text}"
-        )
-        
-        await message.answer(
-            f"✅ Ответ отправлен пользователю (ID: {user_id})",
-            reply_markup=get_main_menu()
-        )
+        await bot.send_message(uid, f"📩 ОТВЕТ ОТ ПОДДЕРЖКИ\n\n{msg.text}")
+        await msg.answer(f"✅ Отправлено пользователю ({uid})", reply_markup=get_main_menu())
     except Exception as e:
-        logging.error(f"Не удалось отправить ответ: {e}")
-        await message.answer(
-            f"❌ Не удалось отправить сообщение пользователю.\n"
-            f"Возможно, он заблокировал бота.\n\nОшибка: {e}",
-            reply_markup=get_main_menu()
-        )
-    
+        await msg.answer(f"❌ Не удалось: {e}", reply_markup=get_main_menu())
     await state.clear()
 
 @dp.message()
-async def user_reply_to_support(message: Message, state: FSMContext):
-    user_id = message.from_user.id
-    
-    if user_id == ADMIN_ID or user_id == SUPPORT_ID:
+async def user_reply(msg: Message, state: FSMContext):
+    if msg.from_user.id in (ADMIN_ID, SUPPORT_ID):
         return
-    
-    current_state = await state.get_state()
-    if current_state:
+    if await state.get_state():
         return
-    
-    username = message.from_user.username or "без username"
-    full_name = message.from_user.full_name
-    
-    admin_text = (
-        f"💬 НОВОЕ СООБЩЕНИЕ В ПОДДЕРЖКУ\n"
+    text = (
+        f"💬 СООБЩЕНИЕ В ПОДДЕРЖКУ\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"👤 От: {full_name}\n"
-        f"🔗 Username: @{username}\n"
-        f"🆔 ID: {user_id}\n\n"
-        f"📝 Сообщение:\n{message.text}"
+        f"👤 {msg.from_user.full_name}\n"
+        f"🔗 @{msg.from_user.username or 'без username'}\n"
+        f"🆔 {msg.from_user.id}\n\n"
+        f"📝 {msg.text}"
     )
-    
-    await bot.send_message(
-        SUPPORT_ID,
-        admin_text,
-        reply_markup=get_admin_reply_keyboard(user_id)
-    )
-    
-    await message.answer("✅ Сообщение отправлено в поддержку!")
+    await bot.send_message(SUPPORT_ID, text, reply_markup=get_admin_reply_keyboard(msg.from_user.id))
+    await msg.answer("✅ Сообщение отправлено в поддержку!")
 
 # ==================== МОИ ПОКУПКИ ====================
 @dp.callback_query(F.data == "my_purchases")
-async def show_my_purchases(callback: CallbackQuery):
-    user_id = callback.from_user.id
-    purchases = user_purchases.get(user_id, [])
-    
+async def my_purchases(cb: CallbackQuery):
+    purchases = user_purchases.get(cb.from_user.id, [])
     if not purchases:
-        await callback.message.edit_text(
-            "🛒 МОИ ПОКУПКИ\n"
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-            "У тебя пока нет покупок.\n"
-            "Перейди в каталог и выбери подходящий пакет!",
-            reply_markup=get_back_button()
+        await cb.message.edit_text(
+            "🛒 МОИ ПОКУПКИ\n━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            "У тебя пока нет покупок.",
+            reply_markup=get_back_button(),
         )
-        await callback.answer()
+        await cb.answer()
         return
-    
-    purchases_text = "🛒 МОИ ПОКУПКИ\n━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-    for i, purchase in enumerate(purchases, 1):
-        purchases_text += (
-            f"{i}. {purchase['emoji']} {purchase['name']}\n"
-            f"   📅 {purchase['date']}\n"
-            f"   💰 {purchase['price']}\n"
+    text = "🛒 МОИ ПОКУПКИ\n━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+    for i, p in enumerate(purchases, 1):
+        text += (
+            f"{i}. {p['emoji']} {p['name']}\n"
+            f"   📅 {p['date']}\n"
+            f"   💰 {p['price']}\n\n"
         )
-    
-    await callback.message.edit_text(purchases_text, reply_markup=get_back_button())
-    await callback.answer()
+    await cb.message.edit_text(text, reply_markup=get_back_button())
+    await cb.answer()
 
-# ==================== ПОКУПКА ТОВАРА ====================
+# ==================== ПОКУПКА ====================
 @dp.callback_query(F.data.startswith("buy_"))
-async def select_product(callback: CallbackQuery):
-    product_id = callback.data.split("_")[1]
-    product = PRODUCTS.get(product_id)
-    
-    if not product:
-        await callback.answer("Товар не найден!")
+async def select_product(cb: CallbackQuery):
+    pid = cb.data.split("_")[1]
+    p = PRODUCTS.get(pid)
+    if not p:
+        await cb.answer("Товар не найден")
         return
-    
-    await callback.message.edit_text(
+    await cb.message.edit_text(
         f"💳 ВЫБЕРИ СПОСОБ ОПЛАТЫ\n\n"
-        f"Товар: {product['emoji']} {product['name']}\n"
-        f"Цена: {product['price_label']}\n\n"
+        f"Товар: {p['emoji']} {p['name']}\n"
+        f"Цена: {p['price_label']}\n\n"
         f"Выбери способ оплаты:",
-        reply_markup=get_payment_method_keyboard(product_id)
+        reply_markup=get_payment_method_keyboard(pid),
     )
-    await callback.answer()
+    await cb.answer()
 
-# ==================== ОПЛАТА ЗВЁЗДАМИ ====================
+# ==================== ⭐️ ОПЛАТА ЗВЁЗДАМИ ====================
 @dp.callback_query(F.data.startswith("pay_stars_"))
-async def pay_with_stars(callback: CallbackQuery):
-    product_id = callback.data.split("_")[2]
-    product = PRODUCTS.get(product_id)
-    user_id = callback.from_user.id
-    
-    if not product:
-        await callback.answer("Товар не найден!")
+async def pay_stars(cb: CallbackQuery):
+    pid = cb.data.split("_")[2]
+    p = PRODUCTS.get(pid)
+    if not p:
+        await cb.answer("Товар не найден")
         return
-    
+
+    pending_purchases[cb.from_user.id] = pid
+
+    text = (
+        f"⭐️ ОПЛАТА ЗВЁЗДАМИ\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"Товар: {p['emoji']} {p['name']}\n"
+        f"Стоимость: {p['price_label']}\n\n"
+        f"📌 Как оплатить:\n"
+        f"1. Нажми «⭐️ ОПЛАТИТЬ {p['price_label']}».\n"
+        f"2. Оплати звёзды Telegram.\n"
+        f"3. Вернись сюда и нажми «✅ Я ОПЛАТИЛ».\n"
+        f"4. Получи ссылку на архив в этом чате."
+    )
+    await cb.message.edit_text(text, reply_markup=get_stars_payment_keyboard(pid))
+    await cb.answer()
+
+@dp.callback_query(F.data.startswith("confirm_stars_"))
+async def confirm_stars(cb: CallbackQuery):
+    pid = cb.data.split("_")[2]
+    p = PRODUCTS.get(pid)
+    if not p:
+        await cb.answer("Товар не найден")
+        return
+
+    uid = cb.from_user.id
+    pending_purchases.pop(uid, None)
+
     purchase = {
-        "product_id": product_id,
-        "name": product["name"],
-        "price": f"{product['price_label']}",
-        "emoji": product["emoji"],
+        "product_id": pid,
+        "name": p["name"],
+        "price": p["price_label"],
+        "emoji": p["emoji"],
         "date": datetime.now().strftime("%d.%m.%Y %H:%M"),
-        "method": "⭐️ Telegram Stars",
     }
-    
-    if user_id not in user_purchases:
-        user_purchases[user_id] = []
-    user_purchases[user_id].append(purchase)
-    
+    user_purchases.setdefault(uid, []).append(purchase)
+
+    # Уведомление админу
     await bot.send_message(
         ADMIN_ID,
-        f"🛒 ОПЛАТА ЗВЁЗДАМИ ПРОШЛА УСПЕШНО!\n\n"
-        f"👤 Пользователь: {callback.from_user.full_name} (@{callback.from_user.username})\n"
-        f"🆔 ID: {user_id}\n"
-        f"📦 Товар: {product['name']}\n"
-        f"💰 Оплата: {product['price_label']}\n"
-        f"📅 Дата: {datetime.now().strftime('%d.%m.%Y %H:%M')}"
+        f"🛒 НОВАЯ ПОКУПКА (STARS)!\n\n"
+        f"👤 {cb.from_user.full_name}\n"
+        f"🔗 @{cb.from_user.username or '—'}\n"
+        f"🆔 {uid}\n"
+        f"📦 {p['name']}\n"
+        f"💰 {p['price_label']}\n"
+        f"📅 {purchase['date']}",
     )
-    
-    await callback.message.edit_text(
-        f"✅ ОПЛАТА ЗВЁЗДАМИ ПРОШЛА УСПЕШНО!\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"🎉 Ты приобрёл {product['emoji']} {product['name']}!\n"
-        f"💳 Оплачено: {product['price_label']}\n\n"
-        f"🔗 Ссылка на архив уже отправлена тебе в чат!\n\n"
-        f"📌 Если ссылка не пришла — напиши в поддержку: /support\n\n"
-        f"Спасибо за покупку! ❤️",
-        reply_markup=get_main_menu()
-    )
-    
-    await callback.answer("✅ Покупка подтверждена!")
 
-# ==================== ОПЛАТА КРИПТОЙ (МЕНЕДЖЕР) ====================
+    # Пользователю — ссылка на архив
+    await cb.message.edit_text(
+        f"✅ ОПЛАТА ПОДТВЕРЖДЕНА!\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"🎉 Ты приобрёл {p['emoji']} {p['name']}!\n"
+        f"💳 Оплачено: {p['price_label']}\n\n"
+        f"🔗 Ссылка на архив:\n{p['archive_link']}\n\n"
+        f"📌 Она также сохранена в «МОИ ПОКУПКИ».\n\n"
+        f"Спасибо за покупку! ❤️",
+        reply_markup=get_main_menu(),
+    )
+    await cb.answer("✅ Покупка подтверждена!")
+
+# ==================== 💎 КРИПТА (менеджер) ====================
 @dp.callback_query(F.data.startswith("pay_crypto_"))
-async def pay_with_crypto(callback: CallbackQuery):
-    product_id = callback.data.split("_")[2]
-    product = PRODUCTS.get(product_id)
-    
-    if not product:
-        await callback.answer("Товар не найден!")
+async def pay_crypto(cb: CallbackQuery):
+    pid = cb.data.split("_")[2]
+    p = PRODUCTS.get(pid)
+    if not p:
+        await cb.answer("Товар не найден")
         return
-    
-    crypto_text = (
+    text = (
         f"💎 ОПЛАТА КРИПТОВАЛЮТОЙ\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"Товар: {product['emoji']} {product['name']}\n\n"
+        f"Товар: {p['emoji']} {p['name']}\n\n"
         f"📌 Для оплаты криптовалютой напишите менеджеру — @oplataoi.\n"
         f"Просьба указать размер и банк."
     )
-    
-    await callback.message.edit_text(
-        crypto_text,
-        reply_markup=get_manager_payment_keyboard(product_id)
-    )
-    await callback.answer()
+    await cb.message.edit_text(text, reply_markup=get_manager_payment_keyboard(pid))
+    await cb.answer()
 
-# ==================== ОПЛАТА КАРТОЙ (МЕНЕДЖЕР) ====================
+# ==================== 💳 КАРТА (менеджер) ====================
 @dp.callback_query(F.data.startswith("pay_card_"))
-async def pay_with_card(callback: CallbackQuery):
-    product_id = callback.data.split("_")[2]
-    product = PRODUCTS.get(product_id)
-    
-    if not product:
-        await callback.answer("Товар не найден!")
+async def pay_card(cb: CallbackQuery):
+    pid = cb.data.split("_")[2]
+    p = PRODUCTS.get(pid)
+    if not p:
+        await cb.answer("Товар не найден")
         return
-    
-    card_text = (
+    text = (
         f"💳 ОПЛАТА КАРТОЙ\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"Товар: {product['emoji']} {product['name']}\n\n"
+        f"Товар: {p['emoji']} {p['name']}\n\n"
         f"📌 Для оплаты картой напишите менеджеру — @oplataoi.\n"
         f"Просьба указать размер и банк."
     )
-    
-    await callback.message.edit_text(
-        card_text,
-        reply_markup=get_manager_payment_keyboard(product_id)
-    )
-    await callback.answer()
+    await cb.message.edit_text(text, reply_markup=get_manager_payment_keyboard(pid))
+    await cb.answer()
 
 # ==================== ЗАПУСК ====================
 async def main():
     logging.info("Бот CLOUD Store запускается...")
-    # ВАЖНО: удаляем webhook, чтобы polling работал корректно
     await bot.delete_webhook(drop_pending_updates=True)
-    logging.info("Webhook удалён, начинаю polling...")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
